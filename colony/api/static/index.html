@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Colony — Neural Darwinism</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 20px;
+    background: #111118;
+    border-bottom: 1px solid #222;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 16px; color: #7eb8f7; letter-spacing: 2px; }
+  #gen-counter { color: #aaa; font-size: 12px; flex: 1; }
+
+  #status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #333; transition: background 0.3s; flex-shrink: 0;
+  }
+  #status-dot.running { background: #44ff88; box-shadow: 0 0 8px #44ff88; animation: blink 1.4s infinite; }
+  #status-dot.loading { background: #f7c948; box-shadow: 0 0 8px #f7c948; animation: blink 0.7s infinite; }
+  #status-dot.done    { background: #555; animation: none; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── Main area ── */
+  .main-area { display: flex; flex: 1; min-height: 0; }
+
+  .panel-left {
+    width: 260px; flex-shrink: 0;
+    background: #111118; border-right: 1px solid #222;
+    display: flex; flex-direction: column; overflow-y: auto;
+  }
+  .section { padding: 14px 16px; border-bottom: 1px solid #1e1e2a; }
+  .section-title { font-size: 10px; letter-spacing: 2px; color: #555; text-transform: uppercase; margin-bottom: 10px; }
+
+  label { display: block; color: #888; font-size: 11px; margin-bottom: 4px; }
+  textarea, input[type=text], input[type=number] {
+    width: 100%; background: #0d0d15; border: 1px solid #2a2a3a;
+    color: #ddd; border-radius: 4px; padding: 6px 8px;
+    font-family: inherit; font-size: 12px; resize: vertical;
+  }
+  textarea { min-height: 72px; }
+  input[type=range] { width:100%; padding:4px 0; border:none; background:transparent; cursor:pointer; }
+  .row { display:flex; gap:8px; margin-bottom:8px; }
+  .row > * { flex:1; }
+
+  /* ── Run button ── */
+  #btn-run {
+    width: 100%; padding: 9px 12px; border: none; border-radius: 6px;
+    cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 700;
+    letter-spacing: 0.5px; transition: background 0.2s, opacity 0.15s;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  #btn-run.idle    { background: #2a6fff; color: #fff; }
+  #btn-run.loading { background: #5a4a00; color: #f7c948; cursor: not-allowed; }
+  #btn-run.running { background: #5a1010; color: #ff8888; }
+  #btn-run.done    { background: #2a6fff; color: #fff; }
+  #btn-run:hover:not(.loading) { opacity: 0.85; }
+
+  .spinner {
+    width: 12px; height: 12px; border: 2px solid currentColor;
+    border-top-color: transparent; border-radius: 50%;
+    animation: spin 0.8s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .pulse-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #44ff88;
+    animation: blink 1s infinite; flex-shrink: 0;
+  }
+
+  /* Stats */
+  .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .stat-box { background:#0d0d15; border:1px solid #1e1e2a; border-radius:4px; padding:8px; }
+  .stat-val { font-size:20px; font-weight:700; color:#7eb8f7; }
+  .stat-lbl { font-size:10px; color:#555; margin-top:2px; }
+
+  /* Role bars */
+  .role-bar { margin-bottom:6px; }
+  .role-label { display:flex; justify-content:space-between; color:#888; font-size:11px; margin-bottom:2px; }
+  .role-track { height:5px; background:#1a1a25; border-radius:3px; overflow:hidden; }
+  .role-fill { height:100%; border-radius:3px; transition:width 0.5s ease; }
+
+  /* Memory bars */
+  .mem-bar { margin-bottom:5px; }
+  .mem-label { display:flex; justify-content:space-between; color:#666; font-size:10px; margin-bottom:2px; }
+  .mem-track { height:3px; background:#1a1a25; border-radius:2px; overflow:hidden; }
+  .mem-fill { height:100%; border-radius:2px; transition:width 0.4s ease; background:#f7c948; }
+  .ver-badge {
+    font-size:8px; padding:0 4px; border-radius:2px;
+    background:rgba(68,221,136,0.15); border:1px solid rgba(68,221,136,0.3); color:#44dd88;
+  }
+
+  /* Event feed */
+  #event-feed { display:flex; flex-direction:column; gap:4px; max-height:120px; overflow-y:auto; }
+  .event-item { font-size:11px; padding:3px 6px; border-radius:3px; border-left:3px solid; background:#0d0d15; }
+  .event-item.pruned   { border-color:#ff4444; color:#ff8888; }
+  .event-item.born     { border-color:#44ff88; color:#88ffaa; }
+  .event-item.score    { border-color:#4488ff; color:#88aaff; }
+  .event-item.training { border-color:#f7c948; color:#f7c948; }
+  .event-item.upgraded { border-color:#44dd88; color:#44dd88; }
+
+  /* Graph */
+  #graph { flex:1; position:relative; overflow:hidden; }
+  svg { width:100%; height:100%; }
+
+  /* Tooltip */
+  #tooltip {
+    position:absolute; display:none; pointer-events:none;
+    background:#111118; border:1px solid #333; border-radius:6px;
+    padding:8px 12px; font-size:12px; color:#ddd; max-width:200px; line-height:1.5;
+  }
+
+  /* Right panel */
+  .panel-right {
+    width:300px; flex-shrink:0; background:#111118;
+    border-left:1px solid #222; display:flex; flex-direction:column;
+  }
+  #response-box { flex:1; padding:14px 16px; overflow-y:auto; line-height:1.6; color:#ccc; font-size:12px; }
+  .response-label {
+    font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+    margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
+  }
+  .response-label.synthesized { color: #44dd88; }
+  .response-label.best        { color: #555; margin-top: 16px; }
+  .synth-badge {
+    font-size: 9px; padding: 1px 5px; border-radius: 3px;
+    background: rgba(68,221,136,0.15); border: 1px solid rgba(68,221,136,0.3);
+    color: #44dd88;
+  }
+  #synthesis-text { white-space: pre-wrap; color: #ddd; margin-bottom: 4px; }
+  #synthesis-by   { font-size: 10px; color: #444; }
+  #best-text      { white-space: pre-wrap; color: #666; font-size: 11px; }
+  #response-score { font-size: 10px; color: #555; margin-bottom: 4px; }
+  #score-chips { padding:10px 16px; border-top:1px solid #1e1e2a; display:flex; flex-wrap:wrap; gap:4px; }
+  .chip { font-size:10px; padding:2px 6px; border-radius:10px; border:1px solid; }
+  .chip.pass { border-color:#44ff88; color:#44ff88; }
+  .chip.fail { border-color:#ff4444; color:#ff4444; }
+
+  /* SVG */
+  .node circle { stroke-width:2px; cursor:pointer; }
+  .node text { pointer-events:none; dominant-baseline:middle; }
+  .link { fill:none; }
+
+  /* ── Metrics bar ── */
+  .metrics-bar {
+    height: 190px;
+    flex-shrink: 0;
+    background: #0d0d15;
+    border-top: 1px solid #1e1e2a;
+    display: flex;
+    gap: 0;
+  }
+
+  .chart-panel {
+    flex: 1;
+    padding: 10px 14px 8px;
+    border-right: 1px solid #1e1e2a;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .chart-panel:last-child { border-right: none; }
+
+  .chart-title {
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: #444;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+  }
+
+  .chart-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div id="status-dot"></div>
+  <h1>COLONY</h1>
+  <span id="gen-counter">Neural Darwinism</span>
+</header>
+
+<div class="main-area">
+
+  <div class="panel-left">
+    <div class="section">
+      <div class="section-title">Task</div>
+      <textarea id="task-input">Explain in 2 sentences why neural networks can approximate any function.</textarea>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Config</div>
+      <div class="row">
+        <div><label>Generations</label><input type="number" id="cfg-generations" value="200" min="1" max="2000"></div>
+        <div><label>Seed neurons</label><input type="number" id="cfg-seed" value="8" min="2" max="20"></div>
+      </div>
+      <label>Speed — <span id="delay-label">1000</span>ms / gen</label>
+      <input type="range" id="cfg-delay" min="200" max="5000" value="1000" step="100">
+      <div class="row" style="margin-top:10px">
+        <div><label>Benchmark every N gen</label><input type="number" id="cfg-bm-interval" value="25" min="0" max="1000"></div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:6px; margin-top:4px">
+        <div style="display:flex; align-items:center; gap:8px">
+          <input type="checkbox" id="cfg-model" checked>
+          <label for="cfg-model" style="margin:0; color:#aaa; cursor:pointer">Use real LLM</label>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px">
+          <input type="checkbox" id="cfg-resume" checked>
+          <label for="cfg-resume" style="margin:0; color:#aaa; cursor:pointer">Resume previous run</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <button id="btn-run" class="idle">
+        <span id="btn-icon">▶</span>
+        <span id="btn-label">Start Colony</span>
+      </button>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Stats</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="stat-val" id="stat-neurons">—</div><div class="stat-lbl">Neurons</div></div>
+        <div class="stat-box"><div class="stat-val" id="stat-gen">—</div><div class="stat-lbl">Generation</div></div>
+        <div class="stat-box"><div class="stat-val" id="stat-pruned" style="color:#ff6666">—</div><div class="stat-lbl">Pruned total</div></div>
+        <div class="stat-box"><div class="stat-val" id="stat-born" style="color:#66ff99">—</div><div class="stat-lbl">Born total</div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Roles</div>
+      <div id="role-bars"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Memory Banks</div>
+      <div id="mem-bars"></div>
+      <div style="margin-top:6px; font-size:10px; color:#444" id="episodic-count">Episodic store: 0 entries</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Events</div>
+      <div id="event-feed"></div>
+    </div>
+
+    <div class="section">
+      <button id="btn-benchmark" style="
+        width:100%; padding:7px 12px; border:1px solid #2a3a5a; border-radius:6px;
+        background:#0d0d15; color:#7eb8f7; font-family:inherit; font-size:11px;
+        cursor:pointer; letter-spacing:0.5px;
+      ">⬡ Run Holdout Benchmark</button>
+      <div id="benchmark-result" style="margin-top:8px; font-size:10px; color:#555;"></div>
+    </div>
+  </div>
+
+  <div id="graph">
+    <svg id="svg">
+      <defs>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <marker id="arrow" viewBox="0 -4 8 8" refX="14" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,-4L8,0L0,4" fill="#2a4a8a"/>
+        </marker>
+      </defs>
+      <g id="zoom-layer">
+        <g id="links-g"></g>
+        <g id="nodes-g"></g>
+      </g>
+    </svg>
+    <div id="tooltip"></div>
+  </div>
+
+  <div class="panel-right">
+    <div class="section" style="flex-shrink:0">
+      <div class="section-title">Colony Output</div>
+    </div>
+    <div id="response-box">
+      <div class="response-label synthesized" id="synthesis-label" style="display:none">
+        Synthesized <span class="synth-badge" id="synthesis-by"></span>
+      </div>
+      <div id="synthesis-text" style="color:#444">Waiting for colony to start...</div>
+
+      <div class="response-label best" id="best-label" style="display:none">
+        Best raw &nbsp;<span id="response-score"></span>
+      </div>
+      <div id="best-text"></div>
+    </div>
+    <div id="score-chips"></div>
+  </div>
+
+</div>
+
+<!-- ── Metrics bar ── -->
+<div class="metrics-bar">
+  <div class="chart-panel">
+    <div class="chart-title">Score / Generation</div>
+    <div class="chart-wrap"><canvas id="chart-score"></canvas></div>
+  </div>
+  <div class="chart-panel">
+    <div class="chart-title">Role Performance</div>
+    <div class="chart-wrap"><canvas id="chart-roles"></canvas></div>
+  </div>
+  <div class="chart-panel">
+    <div class="chart-title">Survival Distribution</div>
+    <div class="chart-wrap"><canvas id="chart-survival"></canvas></div>
+  </div>
+  <div class="chart-panel">
+    <div class="chart-title">Population</div>
+    <div class="chart-wrap"><canvas id="chart-population"></canvas></div>
+  </div>
+</div>
+
+<script>
+const ROLE_COLOR = {
+  analyst:     '#4a9eff',
+  critic:      '#ff5555',
+  synthesizer: '#44dd88',
+  explorer:    '#cc66ff',
+  unknown:     '#888888',
+};
+const ROLES = ['analyst', 'critic', 'synthesizer', 'explorer'];
+
+// ── State ─────────────────────────────────────────────────────────────────
+let ws = null;
+let simulation = null;
+let nodeData = {};
+let edgeData = [];
+let totalPruned = 0;
+let totalBorn = 0;
+let appState = 'idle'; // idle | loading | running | done
+
+// ── Button ────────────────────────────────────────────────────────────────
+function setButtonState(state) {
+  appState = state;
+  const btn   = document.getElementById('btn-run');
+  const icon  = document.getElementById('btn-icon');
+  const label = document.getElementById('btn-label');
+  const dot   = document.getElementById('status-dot');
+
+  btn.className = state;
+  dot.className = state;
+
+  if (state === 'idle') {
+    icon.outerHTML  = '<span id="btn-icon">▶</span>';
+    label.textContent = 'Start Colony';
+    btn.disabled = false;
+  } else if (state === 'loading') {
+    icon.outerHTML  = '<div id="btn-icon" class="spinner"></div>';
+    label.textContent = 'Loading model...';
+    btn.disabled = true;
+  } else if (state === 'running') {
+    icon.outerHTML  = '<div id="btn-icon" class="pulse-dot"></div>';
+    label.textContent = 'Stop Colony';
+    btn.disabled = false;
+  } else if (state === 'done') {
+    icon.outerHTML  = '<span id="btn-icon">▶</span>';
+    label.textContent = 'Run Again';
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('btn-run').addEventListener('click', async () => {
+  if (appState === 'loading') return;
+
+  if (appState === 'running') {
+    await fetch('/stop', { method: 'POST' });
+    setButtonState('idle');
+    return;
+  }
+
+  const config = {
+    task:               document.getElementById('task-input').value,
+    generations:        +document.getElementById('cfg-generations').value,
+    delay_ms:           +document.getElementById('cfg-delay').value,
+    use_model:          document.getElementById('cfg-model').checked,
+    seed_n:             +document.getElementById('cfg-seed').value,
+    resume:             document.getElementById('cfg-resume').checked,
+    benchmark_interval: +document.getElementById('cfg-bm-interval').value,
+  };
+
+  totalPruned = 0; totalBorn = 0;
+  document.getElementById('stat-pruned').textContent = '0';
+  document.getElementById('stat-born').textContent   = '0';
+  document.getElementById('event-feed').innerHTML    = '';
+  resetMetrics();
+
+  if (config.use_model) {
+    setButtonState('loading');
+  } else {
+    setButtonState('running');
+  }
+
+  await fetch('/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+});
+
+document.getElementById('cfg-delay').addEventListener('input', e => {
+  document.getElementById('delay-label').textContent = e.target.value;
+});
+
+// ── D3 ────────────────────────────────────────────────────────────────────
+const svg    = d3.select('#svg');
+const zoomG  = svg.select('#zoom-layer');
+const linksG = svg.select('#links-g');
+const nodesG = svg.select('#nodes-g');
+const tooltip = document.getElementById('tooltip');
+
+svg.call(d3.zoom().scaleExtent([0.2, 4]).on('zoom', e => zoomG.attr('transform', e.transform)));
+
+function getSize() {
+  const el = document.getElementById('graph');
+  return { w: el.clientWidth, h: el.clientHeight };
+}
+
+function initSimulation() {
+  const { w, h } = getSize();
+  simulation = d3.forceSimulation()
+    .force('link',      d3.forceLink().id(d => d.id).distance(120).strength(0.4))
+    .force('charge',    d3.forceManyBody().strength(-300))
+    .force('center',    d3.forceCenter(w / 2, h / 2))
+    .force('collision', d3.forceCollide(d => nodeRadius(d) + 12))
+    .alphaDecay(0.03)
+    .on('tick', ticked);
+}
+
+function nodeRadius(d) { return 10 + d.survival * 28; }
+
+function render(neurons, edges) {
+  const newIds = new Set(neurons.map(n => n.id));
+  for (const id of Object.keys(nodeData)) { if (!newIds.has(id)) delete nodeData[id]; }
+  for (const n of neurons) {
+    if (nodeData[n.id]) { Object.assign(nodeData[n.id], n); }
+    else {
+      const { w, h } = getSize();
+      nodeData[n.id] = { ...n, x: (n.x + 1) / 2 * w, y: (n.y + 1) / 2 * h };
+    }
+  }
+  edgeData = edges;
+  const nodes = Object.values(nodeData);
+
+  // Links
+  const linkSel = linksG.selectAll('.link').data(edges, d => `${d.src}-${d.dst}`);
+  linkSel.exit().remove();
+  const linkEnter = linkSel.enter().append('line').attr('class', 'link').attr('marker-end', 'url(#arrow)');
+  linksG.selectAll('.link').merge(linkEnter)
+    .transition().duration(400)
+    .attr('stroke', '#2a4a8a')
+    .attr('stroke-width', d => Math.max(0.5, d.weight * 4))
+    .attr('stroke-opacity', d => 0.1 + d.weight * 0.7);
+
+  // Nodes
+  const nodeSel = nodesG.selectAll('.node').data(nodes, d => d.id);
+  nodeSel.exit().select('circle').transition().duration(500).attr('r', 0).attr('opacity', 0)
+    .end().then(() => nodeSel.exit().remove()).catch(() => nodeSel.exit().remove());
+
+  const nodeEnter = nodeSel.enter().append('g').attr('class', 'node')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag',  (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end',   (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    )
+    .on('mouseover', showTooltip).on('mousemove', moveTooltip).on('mouseout', hideTooltip);
+
+  nodeEnter.append('circle').attr('r', 0);
+  nodeEnter.append('text').attr('text-anchor', 'middle').attr('dy', '0.35em');
+
+  const nodeUpdate = nodesG.selectAll('.node').merge(nodeEnter);
+  nodeUpdate.select('circle').transition().duration(500)
+    .attr('r', d => nodeRadius(d))
+    .attr('fill', d => ROLE_COLOR[d.role] || '#888')
+    .attr('fill-opacity', 0.85)
+    .attr('stroke', d => d3.color(ROLE_COLOR[d.role] || '#888').brighter(1))
+    .attr('filter', d => d.survival > 0.7 ? 'url(#glow)' : null);
+
+  nodeUpdate.select('text')
+    .text(d => d.id)
+    .attr('fill', '#fff')
+    .attr('font-size', d => Math.max(7, nodeRadius(d) * 0.42) + 'px')
+    .attr('dy', d => nodeRadius(d) + 11);
+
+  simulation.nodes(nodes);
+  simulation.force('link').links(
+    edges.filter(e => nodeData[e.src] && nodeData[e.dst])
+         .map(e => ({ source: e.src, target: e.dst, weight: e.weight }))
+  );
+  simulation.alpha(0.3).restart();
+}
+
+function ticked() {
+  linksG.selectAll('.link')
+    .attr('x1', d => (nodeData[d.src] || {}).x || 0).attr('y1', d => (nodeData[d.src] || {}).y || 0)
+    .attr('x2', d => (nodeData[d.dst] || {}).x || 0).attr('y2', d => (nodeData[d.dst] || {}).y || 0);
+  nodesG.selectAll('.node').attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`);
+}
+
+function showTooltip(e, d) {
+  tooltip.style.display = 'block';
+  tooltip.innerHTML = `
+    <div style="color:${ROLE_COLOR[d.role]};font-weight:700">${d.role}</div>
+    <div>ID: <span style="color:#aaa">${d.id}</span></div>
+    <div>Survival: <span style="color:#7eb8f7">${(d.survival*100).toFixed(1)}%</span></div>
+    <div>Fitness: <span style="color:#7eb8f7">${(d.fitness*100).toFixed(1)}%</span></div>
+    <div>Fires: ${d.fires} &nbsp; Adapter: ${d.adapter ? '✓' : '✗'}</div>
+    <div>State: ${d.state}</div>`;
+}
+function moveTooltip(e) {
+  tooltip.style.left = (e.offsetX + 16) + 'px';
+  tooltip.style.top  = (e.offsetY - 10) + 'px';
+}
+function hideTooltip() { tooltip.style.display = 'none'; }
+
+function updateRoleBars(neurons) {
+  const total = neurons.length || 1;
+  const counts = Object.fromEntries(ROLES.map(r => [r, 0]));
+  for (const n of neurons) counts[n.role] = (counts[n.role] || 0) + 1;
+  document.getElementById('role-bars').innerHTML = ROLES.map(role => `
+    <div class="role-bar">
+      <div class="role-label"><span style="color:${ROLE_COLOR[role]}">${role}</span><span>${counts[role]}</span></div>
+      <div class="role-track"><div class="role-fill" style="width:${(counts[role]/total*100).toFixed(1)}%;background:${ROLE_COLOR[role]}"></div></div>
+    </div>`).join('');
+}
+
+function addEvents(events, scores) {
+  const feed = document.getElementById('event-feed');
+  for (const ev of events) {
+    const el = document.createElement('div');
+    el.className = `event-item ${ev.type}`;
+    el.textContent = ev.type === 'pruned' ? `✗ pruned  ${ev.id}` : `✦ born    ${ev.id}`;
+    feed.insertBefore(el, feed.firstChild);
+  }
+  if (scores && scores.length) {
+    const el = document.createElement('div');
+    el.className = 'event-item score';
+    el.textContent = scores.map(s => `${s.id} ${(s.score*10).toFixed(0)}/10`).join('  ');
+    feed.insertBefore(el, feed.firstChild);
+  }
+  while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+}
+
+function addFeedItem(cls, text) {
+  const feed = document.getElementById('event-feed');
+  const el = document.createElement('div');
+  el.className = `event-item ${cls}`;
+  el.textContent = text;
+  feed.insertBefore(el, feed.firstChild);
+  while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+}
+
+function updateMemoryBars(memory) {
+  if (!memory) return;
+  const { banks = {}, capacity = 16, versions = {}, episodic_count = 0 } = memory;
+  document.getElementById('episodic-count').textContent =
+    `Episodic store: ${episodic_count} entries`;
+
+  document.getElementById('mem-bars').innerHTML = ROLES.map(role => {
+    const count = banks[role] || 0;
+    const pct   = Math.min(100, (count / capacity) * 100).toFixed(0);
+    const ver   = versions[role] ? `<span class="ver-badge">v${versions[role]}</span>` : '';
+    return `<div class="mem-bar">
+      <div class="mem-label">
+        <span style="color:${ROLE_COLOR[role]}">${role} ${ver}</span>
+        <span>${count}/${capacity}</span>
+      </div>
+      <div class="mem-track">
+        <div class="mem-fill" style="width:${pct}%;background:${count >= capacity ? '#44dd88' : '#f7c948'}"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderBenchmarkResult(data) {
+  const el = document.getElementById('benchmark-result');
+  const arrow = (score) => score >= 0.6 ? '▲' : score >= 0.4 ? '→' : '▼';
+  el.innerHTML = `<div style="color:#7eb8f7;margin-bottom:4px">
+    ${data.label}: <strong>${(data.mean_score * 10).toFixed(1)}/10</strong>
+  </div>` + data.tasks.map(t =>
+    `<div style="margin-bottom:2px;color:#555">${arrow(t.score)} ${(t.score*10).toFixed(1)} — ${t.task}</div>`
+  ).join('');
+
+  if (data.history && data.history.length > 1) {
+    const prev = data.history[data.history.length - 2];
+    const delta = data.mean_score - prev.mean_score;
+    const sign = delta >= 0 ? '+' : '';
+    el.innerHTML += `<div style="margin-top:6px;color:${delta>=0?'#44dd88':'#ff6666'}">
+      Δ ${sign}${(delta*10).toFixed(1)} vs previous benchmark
+    </div>`;
+  }
+}
+
+document.getElementById('btn-benchmark').addEventListener('click', async () => {
+  document.getElementById('benchmark-result').textContent = 'Running benchmark...';
+  const res = await fetch('/benchmark', { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    document.getElementById('benchmark-result').textContent = err.error || 'Error';
+  }
+  // Result arrives via WebSocket broadcast
+});
+
+function updateChips(scores) {
+  document.getElementById('score-chips').innerHTML = (scores || []).map(s =>
+    `<span class="chip ${s.success ? 'pass' : 'fail'}">${s.id} ${(s.score*10).toFixed(0)}/10</span>`
+  ).join('');
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────
+const MAX_HISTORY = 120;
+
+const chartHist = {
+  labels:       [],
+  bestScore:    [],
+  roleScores:   Object.fromEntries(ROLES.map(r => [r, []])),
+  survivalMean: [],
+  survivalMin:  [],
+  survivalMax:  [],
+  neuronCount:  [],
+};
+
+Chart.defaults.color = '#555';
+Chart.defaults.font.family = "'JetBrains Mono', 'Fira Code', monospace";
+Chart.defaults.font.size = 9;
+
+const SCALE_BASE = {
+  ticks: { color: '#555', maxTicksLimit: 5 },
+  grid:  { color: '#1a1a25' },
+  border: { color: '#1e1e2a' },
+};
+
+const CHART_OPTS = (yMin, yMax, showLegend = false) => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: { duration: 150 },
+  interaction: { mode: 'index', intersect: false },
+  plugins: {
+    legend: {
+      display: showLegend,
+      labels: { color: '#555', boxWidth: 8, padding: 8 },
+    },
+    tooltip: {
+      backgroundColor: '#111118',
+      borderColor: '#2a2a3a',
+      borderWidth: 1,
+      titleColor: '#aaa',
+      bodyColor: '#ddd',
+    },
+  },
+  scales: {
+    x: { ...SCALE_BASE, ticks: { ...SCALE_BASE.ticks, maxTicksLimit: 6 } },
+    y: { ...SCALE_BASE, min: yMin, max: yMax },
+  },
+});
+
+// Score trend chart
+const scoreChart = new Chart(document.getElementById('chart-score'), {
+  type: 'line',
+  data: {
+    labels: chartHist.labels,
+    datasets: [{
+      label: 'best score',
+      data: chartHist.bestScore,
+      borderColor: '#7eb8f7',
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.3,
+      fill: { target: 'origin', above: 'rgba(126,184,247,0.07)' },
+    }],
+  },
+  options: CHART_OPTS(0, 1),
+});
+
+// Role performance chart
+const roleChart = new Chart(document.getElementById('chart-roles'), {
+  type: 'line',
+  data: {
+    labels: chartHist.labels,
+    datasets: ROLES.map(role => ({
+      label: role,
+      data: chartHist.roleScores[role],
+      borderColor: ROLE_COLOR[role],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.3,
+      spanGaps: true,
+    })),
+  },
+  options: CHART_OPTS(0, 1, true),
+});
+
+// Survival distribution chart (mean + min/max band)
+const survivalChart = new Chart(document.getElementById('chart-survival'), {
+  type: 'line',
+  data: {
+    labels: chartHist.labels,
+    datasets: [
+      {
+        label: 'max',
+        data: chartHist.survivalMax,
+        borderColor: 'rgba(126,184,247,0.25)',
+        borderWidth: 1,
+        borderDash: [3, 3],
+        pointRadius: 0,
+        fill: false,
+        spanGaps: true,
+      },
+      {
+        label: 'mean',
+        data: chartHist.survivalMean,
+        borderColor: '#7eb8f7',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.3,
+        fill: false,
+        spanGaps: true,
+      },
+      {
+        label: 'min',
+        data: chartHist.survivalMin,
+        borderColor: 'rgba(126,184,247,0.25)',
+        borderWidth: 1,
+        borderDash: [3, 3],
+        pointRadius: 0,
+        fill: false,
+        spanGaps: true,
+      },
+    ],
+  },
+  options: CHART_OPTS(0, 1),
+});
+
+// Population chart
+const popChart = new Chart(document.getElementById('chart-population'), {
+  type: 'line',
+  data: {
+    labels: chartHist.labels,
+    datasets: [{
+      label: 'neurons',
+      data: chartHist.neuronCount,
+      borderColor: '#44dd88',
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.3,
+      fill: { target: 'origin', above: 'rgba(68,221,136,0.07)' },
+    }],
+  },
+  options: CHART_OPTS(0, undefined),
+});
+
+function pushMetrics(msg) {
+  chartHist.labels.push(msg.generation);
+  chartHist.bestScore.push(msg.best_score);
+  chartHist.neuronCount.push(msg.neuron_count);
+
+  const rs = msg.role_scores || {};
+  for (const role of ROLES) {
+    chartHist.roleScores[role].push(rs[role] ?? null);
+  }
+
+  const ss = msg.survival_stats || {};
+  chartHist.survivalMean.push(ss.mean ?? null);
+  chartHist.survivalMin.push(ss.min  ?? null);
+  chartHist.survivalMax.push(ss.max  ?? null);
+
+  if (chartHist.labels.length > MAX_HISTORY) {
+    chartHist.labels.shift();
+    chartHist.bestScore.shift();
+    chartHist.neuronCount.shift();
+    chartHist.survivalMean.shift();
+    chartHist.survivalMin.shift();
+    chartHist.survivalMax.shift();
+    for (const role of ROLES) chartHist.roleScores[role].shift();
+  }
+
+  scoreChart.update('none');
+  roleChart.update('none');
+  survivalChart.update('none');
+  popChart.update('none');
+}
+
+function resetMetrics() {
+  chartHist.labels.length = 0;
+  chartHist.bestScore.length = 0;
+  chartHist.neuronCount.length = 0;
+  chartHist.survivalMean.length = 0;
+  chartHist.survivalMin.length = 0;
+  chartHist.survivalMax.length = 0;
+  for (const role of ROLES) chartHist.roleScores[role].length = 0;
+  scoreChart.update('none');
+  roleChart.update('none');
+  survivalChart.update('none');
+  popChart.update('none');
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+
+    if (msg.type === 'status') {
+      if (msg.running) setButtonState('running');
+      return;
+    }
+
+    if (msg.type === 'loading') {
+      setButtonState('loading');
+      document.getElementById('gen-counter').textContent = msg.message;
+      return;
+    }
+
+    if (msg.type === 'init') {
+      setButtonState('running');
+      nodeData = {}; edgeData = [];
+      const resumeLabel = msg.resumed_from > 0 ? ` (resumed from gen ${msg.resumed_from})` : '';
+      document.getElementById('gen-counter').textContent = `Generation ${msg.resumed_from || 0} / ${msg.total}${resumeLabel}`;
+      render(msg.neurons, msg.edges);
+      return;
+    }
+
+    if (msg.type === 'generation') {
+      setButtonState('running');
+      document.getElementById('gen-counter').textContent = `Generation ${msg.generation} / ${msg.total}`;
+      totalPruned += msg.events.filter(e => e.type === 'pruned').length;
+      totalBorn   += msg.events.filter(e => e.type === 'born').length;
+      document.getElementById('stat-neurons').textContent = msg.neuron_count;
+      document.getElementById('stat-gen').textContent     = msg.generation;
+      document.getElementById('stat-pruned').textContent  = totalPruned;
+      document.getElementById('stat-born').textContent    = totalBorn;
+      render(msg.neurons, msg.edges);
+      updateRoleBars(msg.neurons);
+      updateMemoryBars(msg.memory);
+      addEvents(msg.events, msg.scores);
+      updateChips(msg.scores);
+      pushMetrics(msg);
+
+      // Synthesis is the primary output; fall back to best_response if no synthesis yet
+      const hasSynthesis = !!msg.synthesized_response;
+      const synthLabel  = document.getElementById('synthesis-label');
+      const synthText   = document.getElementById('synthesis-text');
+      const synthBy     = document.getElementById('synthesis-by');
+      const bestLabel   = document.getElementById('best-label');
+      const bestText    = document.getElementById('best-text');
+      const scoreEl     = document.getElementById('response-score');
+
+      if (hasSynthesis) {
+        synthLabel.style.display = 'flex';
+        synthBy.textContent = msg.synthesizer_id ? `via ${msg.synthesizer_id}` : '';
+        synthText.textContent = msg.synthesized_response;
+        synthText.style.color = '#ddd';
+
+        bestLabel.style.display = 'flex';
+        scoreEl.textContent = `${(msg.best_score * 10).toFixed(1)}/10`;
+        bestText.textContent = msg.best_response;
+      } else if (msg.best_response) {
+        synthLabel.style.display = 'none';
+        synthText.textContent = msg.best_response;
+        synthText.style.color = '#ccc';
+        bestLabel.style.display = 'none';
+        bestText.textContent = '';
+        scoreEl.textContent = `${(msg.best_score * 10).toFixed(1)}/10`;
+      }
+      return;
+    }
+
+    if (msg.type === 'training_start') {
+      addFeedItem('training', `⟳ fine-tuning ${msg.role} (${msg.examples} examples)`);
+      return;
+    }
+
+    if (msg.type === 'adapter_ready') {
+      addFeedItem('upgraded', `✦ ${msg.role} adapter → v${msg.version}`);
+      return;
+    }
+
+    if (msg.type === 'benchmark') {
+      renderBenchmarkResult(msg);
+      return;
+    }
+
+    if (msg.type === 'done' || msg.type === 'stopped') {
+      setButtonState('done');
+      if (msg.type === 'done')
+        document.getElementById('gen-counter').textContent = `Done — ${msg.generation} generations`;
+    }
+  };
+
+  ws.onclose = () => {
+    setButtonState('idle');
+    setTimeout(connectWS, 2000);
+  };
+
+  setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 5000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+initSimulation();
+connectWS();
+
+// Load existing benchmark history on page load
+(async () => {
+  try {
+    const res = await fetch('/benchmark/history');
+    if (!res.ok) return;
+    const history = await res.json();
+    if (history.length > 0) {
+      // Render the most recent entry with full history for delta display
+      const last = history[history.length - 1];
+      renderBenchmarkResult({ ...last, history });
+    }
+  } catch (_) {}
+})();
+window.addEventListener('resize', () => {
+  if (!simulation) return;
+  const { w, h } = getSize();
+  simulation.force('center', d3.forceCenter(w / 2, h / 2)).alpha(0.1).restart();
+});
+</script>
+</body>
+</html>
