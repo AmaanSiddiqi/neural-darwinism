@@ -2,7 +2,11 @@
 
 A multi-agent system where LLM agents compete for survival using principles from Gerald Edelman's Neural Darwinism theory. Agents with specialized LoRA adapters generate responses, compete via fitness scoring, and strengthen connections with co-successful partners through Hebbian learning. Survivors synthesize their perspectives into a final answer.
 
-![Colony visualization showing force-directed graph of competing neuron agents](cortex_final.png)
+![Colony demo — cortex evolving over 20 generations](demo.gif)
+
+| Final cortex state | Lifecycle metrics |
+|---|---|
+| ![Final cortex — force-directed graph colored by survival score](cortex_final.png) | ![History — neuron count, pruning, and neurogenesis over generations](history.png) |
 
 ---
 

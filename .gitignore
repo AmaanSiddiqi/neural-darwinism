@@ -13,7 +13,5 @@ cortex_state.json
 role_memory.json
 benchmark_history.json
 frames/
-*.png
-demo.gif
 demo.cast
 *.log
