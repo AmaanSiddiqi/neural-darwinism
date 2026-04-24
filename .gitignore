@@ -1,5 +1,6 @@
 .env
 .venv/
+adapters/
 __pycache__/
 *.pyc
 *.pyo
